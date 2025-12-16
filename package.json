@@ -4,6 +4,10 @@
   "description": "Proxy MCP servers as VS Code Language Model Tools",
   "version": "0.0.1",
   "publisher": "borgius",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/borgius/mcp-proxy.git"
+  },
   "engines": {
     "vscode": "^1.103.0"
   },
