@@ -84,6 +84,7 @@ export async function activate(context: vscode.ExtensionContext) {
             for (const [name, client] of mcpClients) {
                 lines.push(`## Server: ${name}`);
                 lines.push(`Status: ${client.isConnected ? 'Connected' : 'Disconnected'}`);
+                lines.push(`Transport: ${('transport' in client) ? (client as any).transport + ((client as any).url ? ' (' + (client as any).url + ')' : '') : 'stdio'}`);
                 lines.push(`Tools:`);
                 
                 for (const tool of client.tools) {

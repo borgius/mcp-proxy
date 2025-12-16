@@ -5,7 +5,7 @@ This VS Code extension proxies one or more MCP (Model Context Protocol) servers 
 Why?
 
 - If, for any reason, your VS Code **Chat / MCP access** is set to **none** (and you’re allowed to change it), this extension lets you expose MCP servers defined in a workspace config file as callable tools.
-- The extension spawns MCP servers locally (from your config) and forwards tool calls via stdio JSON-RPC.
+- The extension can either spawn MCP servers locally (stdio JSON-RPC) or connect to remote MCP servers via WebSocket or HTTP JSON-RPC, depending on how you configure each server.
 
 ## What it provides
 
@@ -36,12 +36,21 @@ Create the file (default) `.vscode/mcp.json`:
 ```jsonc
 {
 	"servers": {
-		"myServer": {
+		"myProcessServer": {
+			"type": "stdio",
 			"command": "node",
 			"args": ["/absolute/or/workspace-relative/path/to/server.js"],
 			"env": {
 				"SOME_VAR": "value"
 			}
+		},
+		"myWebsocketServer": {
+			"type": "websocket",
+			"url": "ws://localhost:12345"
+		},
+		"myHttpServer": {
+			"type": "http",
+			"url": "https://example.com/mcp"
 		}
 	}
 }

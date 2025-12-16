@@ -7,3 +7,4 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ## [Unreleased]
 
 - Initial release
+- Add support for multiple MCP transports: `stdio`, `websocket`, and `http` (configurable per server via `type` and `url` fields)

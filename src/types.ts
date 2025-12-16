@@ -25,13 +25,27 @@ export interface JsonRpcError {
 
 // MCP Server Configuration (from .vscode/mcp.json)
 export interface McpConfig {
-    servers: Record<string, McpServerConfig>;
+    servers: Record<string, McpServerConfigExtended>;
 }
 
 export interface McpServerConfig {
-    command: string;
+    // For 'stdio' transports, set `command` to spawn the server process.
+    // For remote transports (websocket/http) `command` may be omitted and `url` used instead.
+    command?: string;
     args?: string[];
     env?: Record<string, string>;
+}
+
+// Extended server configuration to support multiple transport types.
+// - type: transport to use when communicating with the server. If omitted, defaults to 'stdio'.
+// - url: for non-stdio transports (e.g. websocket or http) the connection URL to use.
+// - headers: optional HTTP/WebSocket headers to include when connecting.
+export type McpServerType = 'stdio' | 'websocket' | 'http';
+
+export interface McpServerConfigExtended extends McpServerConfig {
+    type?: McpServerType;
+    url?: string;
+    headers?: Record<string, string>;
 }
 
 // MCP Protocol Messages

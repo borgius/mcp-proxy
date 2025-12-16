@@ -3,6 +3,8 @@ import { EventEmitter } from 'events';
 import * as vscode from 'vscode';
 import {
     McpServerConfig,
+    McpServerConfigExtended,
+    McpServerType,
     JsonRpcRequest,
     JsonRpcResponse,
     InitializeParams,
@@ -12,6 +14,11 @@ import {
     CallToolParams,
     CallToolResult
 } from './types';
+import * as http from 'http';
+import * as https from 'https';
+// Use require for ws to avoid needing dev-time types when not installed
+const WsClient: any = require('ws');
+
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 
@@ -20,6 +27,8 @@ const MCP_PROTOCOL_VERSION = '2024-11-05';
  */
 export class McpClient extends EventEmitter {
     private process: ChildProcess | null = null;
+    private ws: any | null = null;
+    private httpUrl: string | null = null;
     private requestId = 0;
     private pendingRequests = new Map<number | string, {
         resolve: (value: unknown) => void;
@@ -32,11 +41,19 @@ export class McpClient extends EventEmitter {
 
     constructor(
         public readonly name: string,
-        private readonly config: McpServerConfig,
+        private readonly config: McpServerConfigExtended,
         outputChannel: vscode.OutputChannel
     ) {
         super();
         this.outputChannel = outputChannel;
+    }
+
+    get transport(): string {
+        return this.config.type || 'stdio';
+    }
+
+    get url(): string | undefined {
+        return this.config.url;
     }
 
     get tools(): McpTool[] {
@@ -51,41 +68,100 @@ export class McpClient extends EventEmitter {
         if (this.process) {
             return;
         }
+        const type: McpServerType = this.config.type || 'stdio';
 
-        this.outputChannel.appendLine(`[${this.name}] Starting MCP server: ${this.config.command} ${(this.config.args || []).join(' ')}`);
+        if (type === 'stdio') {
+            if (!this.config.command) {
+                throw new Error('stdio transport requires a `command` in server config');
+            }
 
-        const env = { ...process.env, ...this.config.env };
-        
-        this.process = spawn(this.config.command, this.config.args || [], {
-            env,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            shell: true
-        });
+            this.outputChannel.appendLine(`[${this.name}] Starting MCP server: ${this.config.command} ${(this.config.args || []).join(' ')}`);
 
-        this.process.stdout?.on('data', (data: Buffer) => {
-            this.handleData(data.toString());
-        });
+            const env = { ...process.env, ...this.config.env };
+            
+            this.process = spawn(this.config.command, this.config.args || [], {
+                env,
+                stdio: ['pipe', 'pipe', 'pipe'],
+                shell: true
+            });
 
-        this.process.stderr?.on('data', (data: Buffer) => {
-            this.outputChannel.appendLine(`[${this.name}] stderr: ${data.toString()}`);
-        });
+            this.process.stdout?.on('data', (data: Buffer) => {
+                this.handleData(data.toString());
+            });
 
-        this.process.on('error', (err) => {
-            this.outputChannel.appendLine(`[${this.name}] Process error: ${err.message}`);
-            this.emit('error', err);
-        });
+            this.process.stderr?.on('data', (data: Buffer) => {
+                this.outputChannel.appendLine(`[${this.name}] stderr: ${data.toString()}`);
+            });
 
-        this.process.on('exit', (code, signal) => {
-            this.outputChannel.appendLine(`[${this.name}] Process exited with code ${code}, signal ${signal}`);
-            this.process = null;
-            this.emit('exit', code, signal);
-        });
+            this.process.on('error', (err) => {
+                this.outputChannel.appendLine(`[${this.name}] Process error: ${err.message}`);
+                this.emit('error', err);
+            });
 
-        // Initialize the connection
-        await this.initialize();
-        
-        // Discover tools
-        await this.discoverTools();
+            this.process.on('exit', (code, signal) => {
+                this.outputChannel.appendLine(`[${this.name}] Process exited with code ${code}, signal ${signal}`);
+                this.process = null;
+                this.emit('exit', code, signal);
+            });
+
+            // Initialize the connection
+            await this.initialize();
+            
+            // Discover tools
+            await this.discoverTools();
+        } else if (type === 'websocket') {
+            if (!this.config.url) {
+                throw new Error('WebSocket transport requires a `url` in server config');
+            }
+
+            this.outputChannel.appendLine(`[${this.name}] Connecting via WebSocket to ${this.config.url}`);
+            this.ws = new WsClient(this.config.url, { headers: this.config.headers });
+
+            this.ws.on('open', async () => {
+                this.outputChannel.appendLine(`[${this.name}] WebSocket connected`);
+                try {
+                    await this.initialize();
+                    await this.discoverTools();
+                } catch (err) {
+                    this.outputChannel.appendLine(`[${this.name}] WebSocket initialization failed: ${(err as Error).message}`);
+                }
+            });
+
+            this.ws.on('message', (data: string | Buffer) => {
+                const text = typeof data === 'string' ? data : data.toString();
+                try {
+                    this.outputChannel.appendLine(`[${this.name}] <- ${text}`);
+                    const message = JSON.parse(text) as JsonRpcResponse;
+                    this.handleMessage(message);
+                } catch (e) {
+                    this.outputChannel.appendLine(`[${this.name}] Failed to parse WS message: ${text}`);
+                }
+            });
+
+            this.ws.on('error', (err: Error) => {
+                this.outputChannel.appendLine(`[${this.name}] WebSocket error: ${err.message}`);
+                this.emit('error', err);
+            });
+
+            this.ws.on('close', (code: number, reason: Buffer) => {
+                this.outputChannel.appendLine(`[${this.name}] WebSocket closed: ${code} ${reason}`);
+                this.ws = null;
+                this.emit('exit', code, reason.toString());
+            });
+        } else if (type === 'http') {
+            if (!this.config.url) {
+                throw new Error('HTTP transport requires a `url` in server config');
+            }
+
+            this.httpUrl = this.config.url;
+            this.outputChannel.appendLine(`[${this.name}] Using HTTP transport to ${this.httpUrl}`);
+
+            // Test initialize via HTTP
+            await this.initialize();
+            await this.discoverTools();
+        } else {
+            throw new Error(`Unsupported MCP transport type: ${type}`);
+        }
     }
 
     async stop(): Promise<void> {
@@ -93,6 +169,11 @@ export class McpClient extends EventEmitter {
             this.process.kill();
             this.process = null;
         }
+        if (this.ws) {
+            try { this.ws.close(); } catch {}
+            this.ws = null;
+        }
+        this.httpUrl = null;
         this._tools = [];
         this.serverInfo = null;
     }
@@ -113,7 +194,7 @@ export class McpClient extends EventEmitter {
         this.outputChannel.appendLine(`[${this.name}] Connected to ${this.serverInfo.serverInfo.name} v${this.serverInfo.serverInfo.version}`);
 
         // Send initialized notification
-        this.sendNotification('notifications/initialized', {});
+        await this.sendNotification('notifications/initialized', {});
     }
 
     private async discoverTools(): Promise<void> {
@@ -131,12 +212,32 @@ export class McpClient extends EventEmitter {
     }
 
     private sendRequest<T>(method: string, params: unknown): Promise<T> {
-        return new Promise((resolve, reject) => {
-            if (!this.process?.stdin) {
-                reject(new Error('MCP server not connected'));
-                return;
+        const type: McpServerType = this.config.type || 'stdio';
+
+        if (type === 'http') {
+            // Send JSON-RPC over HTTP POST to this.httpUrl
+            if (!this.httpUrl) {
+                return Promise.reject(new Error('HTTP transport not configured'));
             }
 
+            const id = ++this.requestId;
+            const request: JsonRpcRequest = {
+                jsonrpc: '2.0',
+                id,
+                method,
+                params
+            };
+
+            return this.postJson(this.httpUrl, request).then((resp) => {
+                if (resp.error) {
+                    throw new Error(`${resp.error.message} (code: ${resp.error.code})`);
+                }
+                return resp.result as T;
+            });
+        }
+
+        // For stdio and websocket, use persistent connection + pending requests
+        return new Promise((resolve, reject) => {
             const id = ++this.requestId;
             const request: JsonRpcRequest = {
                 jsonrpc: '2.0',
@@ -151,15 +252,33 @@ export class McpClient extends EventEmitter {
             });
 
             const message = JSON.stringify(request);
-            this.outputChannel.appendLine(`[${this.name}] -> ${message}`);
-            this.process.stdin.write(message + '\n');
+
+            const typeIsStdio = (this.config.type || 'stdio') === 'stdio';
+            if (typeIsStdio) {
+                if (!this.process?.stdin) {
+                    this.pendingRequests.delete(id);
+                    reject(new Error('MCP server not connected'));
+                    return;
+                }
+
+                this.outputChannel.appendLine(`[${this.name}] -> ${message}`);
+                this.process.stdin.write(message + '\n');
+            } else {
+                // WebSocket
+                if (!this.ws || this.ws.readyState !== WsClient.OPEN) {
+                    this.pendingRequests.delete(id);
+                    reject(new Error('MCP WebSocket not connected'));
+                    return;
+                }
+
+                this.outputChannel.appendLine(`[${this.name}] -> ${message}`);
+                this.ws.send(message);
+            }
         });
     }
 
-    private sendNotification(method: string, params: unknown): void {
-        if (!this.process?.stdin) {
-            return;
-        }
+    private async sendNotification(method: string, params: unknown): Promise<void> {
+        const type: McpServerType = this.config.type || 'stdio';
 
         const notification = {
             jsonrpc: '2.0',
@@ -168,8 +287,70 @@ export class McpClient extends EventEmitter {
         };
 
         const message = JSON.stringify(notification);
-        this.outputChannel.appendLine(`[${this.name}] -> ${message}`);
-        this.process.stdin.write(message + '\n');
+
+        if (type === 'http') {
+            if (!this.httpUrl) {
+                return;
+            }
+            try {
+                await this.postJson(this.httpUrl, notification as any);
+            } catch (e) {
+                // Ignore notification errors
+            }
+            return;
+        }
+
+        if ((this.config.type || 'stdio') === 'stdio') {
+            if (!this.process?.stdin) {
+                return;
+            }
+            this.outputChannel.appendLine(`[${this.name}] -> ${message}`);
+            this.process.stdin.write(message + '\n');
+            return;
+        }
+
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.outputChannel.appendLine(`[${this.name}] -> ${message}`);
+            this.ws.send(message);
+        }
+    }
+
+    private postJson(urlStr: string, body: unknown): Promise<JsonRpcResponse> {
+        return new Promise((resolve, reject) => {
+            try {
+                const url = new URL(urlStr);
+                const data = JSON.stringify(body);
+                const opts: any = {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Content-Length': Buffer.byteLength(data),
+                        ...(this.config.headers || {})
+                    }
+                };
+
+                const client = url.protocol === 'https:' ? https : http;
+                const req = client.request(url, opts, (res) => {
+                    let resp = '';
+                    res.setEncoding('utf8');
+                    res.on('data', (chunk) => resp += chunk);
+                    res.on('end', () => {
+                        try {
+                            const parsed = JSON.parse(resp) as JsonRpcResponse;
+                            resolve(parsed);
+                        } catch (e) {
+                            reject(new Error('Failed to parse HTTP JSON-RPC response'));
+                        }
+                    });
+                });
+
+                req.on('error', (err) => reject(err));
+                req.write(data);
+                req.end();
+            } catch (e) {
+                reject(e);
+            }
+        });
     }
 
     private handleData(data: string): void {
