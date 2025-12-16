@@ -16,6 +16,16 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "MCP Proxy",
+      "properties": {
+        "mcpProxy.configFile": {
+          "type": "string",
+          "default": ".vscode/mcp.json",
+          "description": "Path to the MCP server configuration JSON file. Relative paths are resolved from each workspace folder."
+        }
+      }
+    },
     "commands": [
       {
         "command": "mcp-proxy.refresh",
@@ -36,7 +46,7 @@
         ],
         "toolReferenceName": "mcp",
         "displayName": "MCP Tool Call",
-        "modelDescription": "Call any tool from MCP servers configured in .vscode/mcp.json. Use 'mcp-list' first to discover available servers and tools. This tool allows you to invoke MCP server tools like browser automation, file operations, and more.",
+        "modelDescription": "Call any tool from MCP servers configured in the workspace MCP config file (set `mcpProxy.configFile` to override the default .vscode/mcp.json). Use 'mcp-list' first to discover available servers and tools. This tool allows you to invoke MCP server tools like browser automation, file operations, and more.",
         "userDescription": "Call tools from MCP servers",
         "canBeReferencedInPrompt": true,
         "icon": "$(tools)",
@@ -72,7 +82,7 @@
         ],
         "toolReferenceName": "mcp-list",
         "displayName": "List MCP Tools",
-        "modelDescription": "List all available MCP servers and their tools from .vscode/mcp.json. Use this to discover what MCP tools are available before calling them with 'mcp-call'.",
+        "modelDescription": "List all available MCP servers and their tools from the workspace MCP config file (see `mcpProxy.configFile`). Use this to discover what MCP tools are available before calling them with 'mcp-call'.",
         "userDescription": "List available MCP servers and tools",
         "canBeReferencedInPrompt": true,
         "icon": "$(list-tree)",

@@ -2,10 +2,11 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { McpClient } from './mcpClient';
-import { McpConfig } from './types';
+import type { McpConfig } from './types';
 
 let outputChannel: vscode.OutputChannel;
 const mcpClients = new Map<string, McpClient>();
+let mcpConfigWatchers: vscode.FileSystemWatcher[] = [];
 
 // Input types for our tools
 interface McpCallInput {
@@ -14,9 +15,7 @@ interface McpCallInput {
     arguments?: Record<string, unknown>;
 }
 
-interface McpListInput {
-    // No input required
-}
+type McpListInput = Record<string, never>;
 
 export async function activate(context: vscode.ExtensionContext) {
     outputChannel = vscode.window.createOutputChannel('MCP Proxy');
@@ -24,7 +23,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register the mcp-call tool
     const mcpCallTool = vscode.lm.registerTool<McpCallInput>('mcp-call', {
-        async invoke(options, token) {
+        async invoke(options, _token) {
             const { server, tool, arguments: args } = options.input;
             outputChannel.appendLine(`mcp-call: server=${server}, tool=${tool}, args=${JSON.stringify(args)}`);
 
@@ -60,7 +59,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 ]);
             }
         },
-        prepareInvocation(options, token) {
+        prepareInvocation(options, _token) {
             return {
                 invocationMessage: `Calling MCP tool ${options.input.tool} on ${options.input.server}...`
             };
@@ -69,12 +68,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register the mcp-list tool
     const mcpListTool = vscode.lm.registerTool<McpListInput>('mcp-list', {
-        async invoke(options, token) {
+        async invoke(_options, _token) {
             outputChannel.appendLine('mcp-list: listing all servers and tools');
 
             if (mcpClients.size === 0) {
                 return new vscode.LanguageModelToolResult([
-                    new vscode.LanguageModelTextPart('No MCP servers are currently loaded. Make sure you have a .vscode/mcp.json file in your workspace.')
+                    new vscode.LanguageModelTextPart(
+                        "No MCP servers are currently loaded. Ensure your MCP config file exists (default: .vscode/mcp.json) or set 'mcpProxy.configFile' to point at a different file."
+                    )
                 ]);
             }
 
@@ -99,7 +100,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 new vscode.LanguageModelTextPart(lines.join('\n'))
             ]);
         },
-        prepareInvocation(options, token) {
+        prepareInvocation(_options, _token) {
             return {
                 invocationMessage: 'Listing MCP servers and tools...'
             };
@@ -114,17 +115,78 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('mcp-proxy.showOutput', () => outputChannel.show())
     );
 
-    // Watch for mcp.json changes
-    const mcpJsonWatcher = vscode.workspace.createFileSystemWatcher('**/.vscode/mcp.json');
-    mcpJsonWatcher.onDidChange(() => refreshMcpServers());
-    mcpJsonWatcher.onDidCreate(() => refreshMcpServers());
-    mcpJsonWatcher.onDidDelete(() => refreshMcpServers());
-    context.subscriptions.push(mcpJsonWatcher);
+    // Watch for MCP config changes (configurable)
+    await setupMcpConfigWatchers(context);
+
+    // React to configuration changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(async (e) => {
+            if (e.affectsConfiguration('mcpProxy.configFile')) {
+                outputChannel.appendLine("mcpProxy.configFile changed; updating watchers and refreshing servers");
+                await setupMcpConfigWatchers(context);
+                await refreshMcpServers();
+            }
+        })
+    );
 
     // Initial load
     await refreshMcpServers();
 
     outputChannel.appendLine('MCP Proxy extension activated');
+}
+
+function getConfiguredMcpConfigFile(): string {
+    const config = vscode.workspace.getConfiguration('mcpProxy');
+    const raw = config.get<string>('configFile', '.vscode/mcp.json');
+    return (raw || '.vscode/mcp.json').trim();
+}
+
+function normalizeRelativeConfigPath(configFile: string): string {
+    let rel = configFile.trim();
+    if (rel.startsWith('./')) {
+        rel = rel.slice(2);
+    }
+    while (rel.startsWith('/')) {
+        rel = rel.slice(1);
+    }
+    return rel;
+}
+
+function disposeMcpConfigWatchers(): void {
+    for (const watcher of mcpConfigWatchers) {
+        try {
+            watcher.dispose();
+        } catch {
+            // ignore
+        }
+    }
+    mcpConfigWatchers = [];
+}
+
+async function setupMcpConfigWatchers(context: vscode.ExtensionContext): Promise<void> {
+    disposeMcpConfigWatchers();
+
+    const configFile = getConfiguredMcpConfigFile();
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+        return;
+    }
+
+    if (path.isAbsolute(configFile)) {
+        // FileSystemWatcher patterns are workspace-relative; skip watching absolute paths.
+        outputChannel.appendLine(`Configured MCP config file is absolute; auto-reload disabled: ${configFile}`);
+        return;
+    }
+
+    const rel = normalizeRelativeConfigPath(configFile);
+    for (const folder of workspaceFolders) {
+        const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, rel));
+        watcher.onDidChange(() => refreshMcpServers());
+        watcher.onDidCreate(() => refreshMcpServers());
+        watcher.onDidDelete(() => refreshMcpServers());
+        mcpConfigWatchers.push(watcher);
+        context.subscriptions.push(watcher);
+    }
 }
 
 async function refreshMcpServers(): Promise<void> {
@@ -137,19 +199,23 @@ async function refreshMcpServers(): Promise<void> {
     }
     mcpClients.clear();
 
-    // Find all mcp.json files in workspaces
+    // Find MCP config files in workspaces
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         outputChannel.appendLine('No workspace folders found');
         return;
     }
 
+    const configuredConfigFile = getConfiguredMcpConfigFile();
+
     for (const folder of workspaceFolders) {
-        const mcpJsonPath = path.join(folder.uri.fsPath, '.vscode', 'mcp.json');
-        
-        if (fs.existsSync(mcpJsonPath)) {
-            outputChannel.appendLine(`Found mcp.json in ${folder.name}`);
-            await loadMcpConfig(mcpJsonPath, folder);
+        const configPath = path.isAbsolute(configuredConfigFile)
+            ? configuredConfigFile
+            : path.join(folder.uri.fsPath, normalizeRelativeConfigPath(configuredConfigFile));
+
+        if (fs.existsSync(configPath)) {
+            outputChannel.appendLine(`Found MCP config in ${folder.name}: ${configPath}`);
+            await loadMcpConfig(configPath, folder);
         }
     }
 
@@ -167,7 +233,7 @@ async function refreshMcpServers(): Promise<void> {
     }
 }
 
-async function loadMcpConfig(configPath: string, folder: vscode.WorkspaceFolder): Promise<void> {
+async function loadMcpConfig(configPath: string, _folder: vscode.WorkspaceFolder): Promise<void> {
     try {
         const content = fs.readFileSync(configPath, 'utf-8');
         // Remove comments from JSON (simple implementation for // comments)

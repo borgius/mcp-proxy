@@ -1,71 +1,58 @@
-# mcp-proxy README
+# MCP Proxy
 
-This is the README for your extension "mcp-proxy". After writing up a brief description, we recommend including the following sections.
+This VS Code extension proxies one or more MCP (Model Context Protocol) servers into VS Code’s **Language Model Tools** API.
 
-## Features
+Why?
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- If, for any reason, your VS Code **Chat / MCP access** is set to **none** (and you’re allowed to change it), this extension lets you expose MCP servers defined in a workspace config file as callable tools.
+- The extension spawns MCP servers locally (from your config) and forwards tool calls via stdio JSON-RPC.
 
-For example if there is an image subfolder under your extension project workspace:
+## What it provides
 
-\!\[feature X\]\(images/feature-x.png\)
+- **`mcp-list`**: lists all loaded MCP servers and their tools.
+- **`mcp-call`**: calls a specific MCP tool on a specific server.
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+These are registered through VS Code’s Language Model Tools API (`vscode.lm.registerTool`).
 
-## Requirements
+## Configuration
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+By default, the extension loads MCP server configs from:
 
-## Extension Settings
+- `.vscode/mcp.json` (per workspace folder)
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+You can point it at a different file via settings:
 
-For example:
+- `mcpProxy.configFile` (default: `.vscode/mcp.json`)
 
-This extension contributes the following settings:
+Notes:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+- Relative paths are resolved from each workspace folder.
+- If you set an **absolute** path, the extension will still load it, but auto-reload on file changes may be disabled (because VS Code file watchers are workspace-relative).
 
-## Known Issues
+### Example config file
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+Create the file (default) `.vscode/mcp.json`:
 
-## Release Notes
+```jsonc
+{
+	"servers": {
+		"myServer": {
+			"command": "node",
+			"args": ["/absolute/or/workspace-relative/path/to/server.js"],
+			"env": {
+				"SOME_VAR": "value"
+			}
+		}
+	}
+}
+```
 
-Users appreciate release notes as you update your extension.
+## Commands
 
-### 1.0.0
+- **MCP Proxy: Refresh Servers** (`mcp-proxy.refresh`) reloads config and restarts MCP server processes.
+- **MCP Proxy: Show Output** (`mcp-proxy.showOutput`) shows the extension output channel.
 
-Initial release of ...
+## Requirements / permissions
 
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+- This extension is only useful when VS Code can run Language Model Tools and you have permission to enable the relevant Chat/MCP access in your environment.
+- MCP servers are processes you run locally from your configuration file; treat the config as code and only use servers you trust.
