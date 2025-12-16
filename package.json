@@ -1,0 +1,112 @@
+{
+  "name": "mcp-proxy",
+  "displayName": "MCP Proxy",
+  "description": "Proxy MCP servers as VS Code Language Model Tools",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.103.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mcp-proxy.refresh",
+        "title": "MCP Proxy: Refresh Servers"
+      },
+      {
+        "command": "mcp-proxy.showOutput",
+        "title": "MCP Proxy: Show Output"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "mcp-call",
+        "tags": [
+          "mcp",
+          "proxy",
+          "tool"
+        ],
+        "toolReferenceName": "mcp",
+        "displayName": "MCP Tool Call",
+        "modelDescription": "Call any tool from MCP servers configured in .vscode/mcp.json. Use 'mcp-list' first to discover available servers and tools. This tool allows you to invoke MCP server tools like browser automation, file operations, and more.",
+        "userDescription": "Call tools from MCP servers",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(tools)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "server": {
+              "type": "string",
+              "description": "The name of the MCP server (as defined in mcp.json)"
+            },
+            "tool": {
+              "type": "string",
+              "description": "The name of the tool to call on the MCP server"
+            },
+            "arguments": {
+              "type": "object",
+              "description": "The arguments to pass to the tool (as a JSON object)"
+            }
+          },
+          "required": [
+            "server",
+            "tool"
+          ]
+        }
+      },
+      {
+        "name": "mcp-list",
+        "tags": [
+          "mcp",
+          "proxy",
+          "list",
+          "discovery"
+        ],
+        "toolReferenceName": "mcp-list",
+        "displayName": "List MCP Tools",
+        "modelDescription": "List all available MCP servers and their tools from .vscode/mcp.json. Use this to discover what MCP tools are available before calling them with 'mcp-call'.",
+        "userDescription": "List available MCP servers and tools",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(list-tree)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.103.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.48.1",
+    "eslint": "^9.39.1",
+    "esbuild": "^0.27.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
