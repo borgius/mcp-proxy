@@ -2,7 +2,7 @@
   "name": "mcp-proxy",
   "displayName": "MCP Proxy",
   "description": "Proxy MCP servers as VS Code Language Model Tools",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "publisher": "borgius",
   "license": "MIT",
   "repository": {

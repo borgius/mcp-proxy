@@ -23,6 +23,52 @@ const WsClient: any = require('ws');
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 
 /**
+ * Resolves VS Code-style placeholders in a string.
+ * Supports: ${workspaceFolder}, ${workspaceFolderBasename}, ${userHome}, ${env:VAR_NAME}, etc.
+ */
+function resolvePlaceholders(value: string, workspaceFolder?: string): string {
+    return value.replace(/\$\{([^}]+)\}/g, (match, placeholder: string) => {
+        // Handle ${env:VAR_NAME}
+        if (placeholder.startsWith('env:')) {
+            const envVar = placeholder.substring(4);
+            return process.env[envVar] || '';
+        }
+
+        switch (placeholder) {
+            case 'workspaceFolder':
+                return workspaceFolder || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+            case 'workspaceFolderBasename': {
+                const folder = workspaceFolder || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+                return folder ? folder.split(/[\\/]/).pop() || '' : '';
+            }
+            case 'userHome':
+                return process.env.HOME || process.env.USERPROFILE || '';
+            case 'cwd':
+                return process.cwd();
+            case 'pathSeparator':
+                return process.platform === 'win32' ? '\\' : '/';
+            default:
+                // Return original if placeholder is unknown
+                return match;
+        }
+    });
+}
+
+/**
+ * Resolves placeholders in all string values of an object (shallow).
+ */
+function resolveEnvPlaceholders(env: Record<string, string> | undefined, workspaceFolder?: string): Record<string, string> | undefined {
+    if (!env) {
+        return undefined;
+    }
+    const resolved: Record<string, string> = {};
+    for (const [key, value] of Object.entries(env)) {
+        resolved[key] = resolvePlaceholders(value, workspaceFolder);
+    }
+    return resolved;
+}
+
+/**
  * MCP Client that spawns and communicates with an MCP server via stdio JSON-RPC
  */
 export class McpClient extends EventEmitter {
@@ -70,16 +116,24 @@ export class McpClient extends EventEmitter {
         }
         const type: McpServerType = this.config.type || 'stdio';
 
+        // Get workspace folder for placeholder resolution
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
         if (type === 'stdio') {
             if (!this.config.command) {
                 throw new Error('stdio transport requires a `command` in server config');
             }
 
-            this.outputChannel.appendLine(`[${this.name}] Starting MCP server: ${this.config.command} ${(this.config.args || []).join(' ')}`);
+            // Resolve placeholders in command, args, and env
+            const command = resolvePlaceholders(this.config.command, workspaceFolder);
+            const args = (this.config.args || []).map(arg => resolvePlaceholders(arg, workspaceFolder));
+            const configEnv = resolveEnvPlaceholders(this.config.env, workspaceFolder);
 
-            const env = { ...process.env, ...this.config.env };
+            this.outputChannel.appendLine(`[${this.name}] Starting MCP server: ${command} ${args.join(' ')}`);
+
+            const env = { ...process.env, ...configEnv };
             
-            this.process = spawn(this.config.command, this.config.args || [], {
+            this.process = spawn(command, args, {
                 env,
                 stdio: ['pipe', 'pipe', 'pipe'],
                 shell: true
@@ -114,8 +168,9 @@ export class McpClient extends EventEmitter {
                 throw new Error('WebSocket transport requires a `url` in server config');
             }
 
-            this.outputChannel.appendLine(`[${this.name}] Connecting via WebSocket to ${this.config.url}`);
-            this.ws = new WsClient(this.config.url, { headers: this.config.headers });
+            const url = resolvePlaceholders(this.config.url, workspaceFolder);
+            this.outputChannel.appendLine(`[${this.name}] Connecting via WebSocket to ${url}`);
+            this.ws = new WsClient(url, { headers: this.config.headers });
 
             this.ws.on('open', async () => {
                 this.outputChannel.appendLine(`[${this.name}] WebSocket connected`);
@@ -153,7 +208,7 @@ export class McpClient extends EventEmitter {
                 throw new Error('HTTP transport requires a `url` in server config');
             }
 
-            this.httpUrl = this.config.url;
+            this.httpUrl = resolvePlaceholders(this.config.url, workspaceFolder);
             this.outputChannel.appendLine(`[${this.name}] Using HTTP transport to ${this.httpUrl}`);
 
             // Test initialize via HTTP
