@@ -144,7 +144,10 @@ export class McpClient extends EventEmitter {
             });
 
             this.process.stderr?.on('data', (data: Buffer) => {
-                this.outputChannel.appendLine(`[${this.name}] stderr: ${data.toString()}`);
+                const text = data.toString().trimEnd();
+                if (text) {
+                    this.outputChannel.appendLine(`[${this.name}] stderr: ${text}`);
+                }
             });
 
             this.process.on('error', (err) => {

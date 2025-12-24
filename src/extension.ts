@@ -18,8 +18,7 @@ interface McpCallInput {
 type McpListInput = Record<string, never>;
 
 export async function activate(context: vscode.ExtensionContext) {
-    outputChannel = vscode.window.createOutputChannel('MCP Proxy', { log: false });
-    // Note: Output channel created with log: false to preserve raw output with ANSI colors
+    outputChannel = vscode.window.createOutputChannel('MCP Proxy');
     outputChannel.appendLine('MCP Proxy extension activating...');
 
     // Register the mcp-call tool
