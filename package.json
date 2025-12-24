@@ -110,7 +110,11 @@
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "publish": "vsce publish",
+    "publish:patch": "npm version patch && vsce publish",
+    "publish:minor": "npm version minor && vsce publish",
+    "publish:major": "npm version major && vsce publish"
   },
   "dependencies": {
     "ws": "^8.13.0",
